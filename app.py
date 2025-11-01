@@ -24,14 +24,15 @@ def find_item_coordinates(pdf):
 
 def overlay_barcodes(pdf, items):
     """
-    Draw wide, high-quality barcodes on the right side — NO human-readable text
-    (to ensure scanners can read without interference).
+    Draw high-quality, wide, light Code128 barcodes on the right side,
+    mimicking the clean style of the original top-right barcode.
     """
     for page_index, item, x, y in items:
         page = pdf[page_index]
 
         barcode_width_pt = 300
         barcode_height_pt = 80
+
         right_edge = 612  # Letter width
         margin = 30
         left = right_edge - barcode_width_pt - margin
@@ -50,12 +51,11 @@ def overlay_barcodes(pdf, items):
         buf = BytesIO()
         tmp_canvas = canvas.Canvas(buf, pagesize=(barcode_width_pt, barcode_height_pt))
 
-        # CRITICAL: humanReadable=False → no number under barcode
         barcode = code128.Code128(
             item,
             barHeight=barcode_height_pt - 30,
-            barWidth=1.5,          # wide, readable bars
-            humanReadable=False    # ← removed to avoid scanner issues
+            barWidth=1.5,  # ← your wide, readable style
+            humanReadable=True
         )
         barcode_width_actual = barcode.width
         x_offset = (barcode_width_pt - barcode_width_actual) / 2
@@ -71,33 +71,40 @@ def overlay_barcodes(pdf, items):
 
 def generate_clean_barcode_sheet(items):
     """
-    Generate a clean, standalone PDF with large barcodes + item numbers (for humans).
-    Uses the SAME barcode style (barWidth=1.5) but keeps human-readable text.
+    Generate a clean, standalone PDF with one large barcode per item,
+    using the SAME style as overlay_barcodes (barWidth=1.5, large size).
     """
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     margin = 80
-    y = height - 120
+    y = height - 120  # Start near top
 
     for idx, (_, item, _, _) in enumerate(items):
-        if y < 200:
+        if y < 200:  # New page if not enough space
             c.showPage()
             y = height - 120
 
+        # Draw item label
         c.setFont("Helvetica-Bold", 20)
         c.drawString(margin, y, f"Item: {item}")
         y -= 50
 
-        # Keep humanReadable=True here (for reference sheet)
+        # Draw LARGE barcode (same as overlay)
         barcode = code128.Code128(
             item,
-            barHeight=50,
-            barWidth=1.5,
+            barHeight=80 - 30,  # matches overlay
+            barWidth=1.5,       # ← critical: same wide bars
             humanReadable=True
         )
-        barcode.drawOn(c, margin, y - 60)
-        y -= 120
+        barcode_width = 300
+        barcode_height = 80
+        x_pos = margin
+        y_pos = y - 70  # position below label
+
+        # Center or align left
+        barcode.drawOn(c, x_pos, y_pos)
+        y -= 120  # space to next item
 
     c.save()
     buffer.seek(0)
