@@ -6,7 +6,7 @@ from reportlab.graphics.barcode import code128
 from reportlab.lib.pagesizes import letter
 
 # -----------------------------
-# FULL MASTER LIST OF VALID ITEM NUMBERS
+# FULL LIST OF VALID ITEM NUMBERS (from your input)
 # -----------------------------
 KNOWN_ITEMS = {
     "101500002", "101507674", "101700361", "101700365", "101700608", "101700666", "101700694", "101701333",
@@ -155,107 +155,98 @@ def find_item_coordinates(pdf):
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
                     t = span["text"].strip()
+                    # NEW: Match against your full list, and still require x < 200 (left margin)
                     if t in KNOWN_ITEMS and span["bbox"][0] < 200:
                         coords.append((i, t, span["bbox"][0], span["bbox"][1]))
     return coords
 
 # -----------------------------
-# Helper: Overlay barcodes (NO human-readable text under barcode)
+# Helper: Overlay barcodes (your original style)
 # -----------------------------
 def overlay_barcodes(pdf, items):
+    """
+    Draw high-quality, wide, light Code128 barcodes on the right side,
+    mimicking the clean style of the original top-right barcode.
+    """
     for page_index, item, x, y in items:
         page = pdf[page_index]
-        top = y + 25
-        bottom = top + 60
-        left = 490
-        right = left + 200
 
-        bg = fitz.Rect(left - 5, top - 5, right + 5, bottom + 5)
-        page.draw_rect(bg, color=(1, 1, 1), fill=(1, 1, 1))
+        barcode_width_pt = 300
+        barcode_height_pt = 80
+        right_edge = 612  # Letter size page width
+        margin = 30
+        left = right_edge - barcode_width_pt - margin
+        right = right_edge - margin
+        top = y - 25
+        bottom = top + barcode_height_pt
+
+        if left < 0:
+            left = 0
+            right = barcode_width_pt
+
+        bg_margin = 15
+        bg_rect = fitz.Rect(left - bg_margin, top - bg_margin, right + bg_margin, bottom + bg_margin)
+        page.draw_rect(bg_rect, color=(1, 1, 1), fill=(1, 1, 1))
 
         buf = BytesIO()
-        tmp = canvas.Canvas(buf, pagesize=(200, 70))
-        barcode = code128.Code128(item, barHeight=50, barWidth=0.3, humanReadable=False)
-        barcode.drawOn(tmp, 10, 10)
-        tmp.save()
-        buf.seek(0)
+        tmp_canvas = canvas.Canvas(buf, pagesize=(barcode_width_pt, barcode_height_pt))
 
+        barcode = code128.Code128(
+            item,
+            barHeight=barcode_height_pt - 30,
+            barWidth=1.5,
+            humanReadable=True
+        )
+        barcode_width_actual = barcode.width
+        x_offset = (barcode_width_pt - barcode_width_actual) / 2
+        barcode.drawOn(tmp_canvas, x_offset, 15)
+        tmp_canvas.save()
+
+        buf.seek(0)
         img_pdf = fitz.open("pdf", buf.read())
-        rect = fitz.Rect(left, top, right, bottom)
-        page.show_pdf_page(rect, img_pdf, 0)
+        target_rect = fitz.Rect(left, top, right, bottom)
+        page.show_pdf_page(target_rect, img_pdf, 0)
+
     return pdf
 
-# -----------------------------
-# Helper: Clean barcode sheet (with human-readable text)
-# -----------------------------
-def generate_clean_barcode_sheet(items):
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
-    margin = 60
-    y = height - 100
-
-    for idx, (_, item, _, _) in enumerate(items):
-        if y < 150:
-            c.showPage()
-            y = height - 100
-
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(margin, y, f"Item: {item}")
-        y -= 40
-
-        barcode = code128.Code128(item, barHeight=50, barWidth=0.3, humanReadable=True)
-        barcode.drawOn(c, margin, y - 50)
-        y -= 100
-
-    c.save()
-    buffer.seek(0)
-    return buffer.getvalue()
-
-# -----------------------------
-# Streamlit UI
-# -----------------------------
+# --- Streamlit UI ---
 st.set_page_config(page_title="Picking Ticket Barcode Generator", layout="centered")
 st.title("📦 Picking Ticket Barcode Generator")
+st.write(
+    """
+    Upload a **Picking Ticket PDF** (18 Wheels format).  
+    This tool detects item numbers and adds **wide, high-quality, readable Code 128 barcodes** 
+    on the right side — styled like the original top-right barcode for optimal scanning.
+    """
+)
 
 uploaded_file = st.file_uploader("Upload Picking Ticket PDF", type=["pdf"])
 
 if uploaded_file:
     pdf = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-    with st.spinner("🔍 Analyzing..."):
+    with st.spinner("🔍 Analyzing picking ticket..."):
         items = find_item_coordinates(pdf)
 
     if not items:
         st.error("❌ No valid item numbers found.")
     else:
-        st.success(f"✅ Found {len(items)} item(s).")
+        st.success(f"✅ Found {len(items)} item number(s).")
         if st.checkbox("Show detected item numbers"):
             st.write([i[1] for i in items])
 
-        col1, col2 = st.columns(2)
+        if st.button("🖨️ Generate Barcode PDF"):
+            with st.spinner("🖨️ Generating high-quality barcodes..."):
+                out_pdf = overlay_barcodes(pdf, items)
+                output = BytesIO()
+                out_pdf.save(output)
+                output.seek(0)
 
-        with col1:
-            if st.button("🖨️ Annotated Picking Ticket"):
-                with st.spinner("Generating..."):
-                    out_pdf = overlay_barcodes(pdf, items)
-                    output = BytesIO()
-                    out_pdf.save(output)
-                    st.download_button(
-                        "📥 Download Annotated PDF",
-                        output.getvalue(),
-                        "picking_ticket_with_barcodes.pdf",
-                        "application/pdf"
-                    )
-
-        with col2:
-            if st.button("📄 Barcodes Only (No Ticket)"):
-                with st.spinner("Generating clean sheet..."):
-                    clean_pdf = generate_clean_barcode_sheet(items)
-                    st.download_button(
-                        "📥 Download Barcodes Only",
-                        clean_pdf,
-                        "barcodes_only.pdf",
-                        "application/pdf"
-                    )
+            st.success("✅ Ready to download!")
+            st.download_button(
+                "📥 Download PDF with Barcodes",
+                data=output,
+                file_name="picking_ticket_with_barcodes.pdf",
+                mime="application/pdf"
+            )
 
     pdf.close()
