@@ -6,8 +6,16 @@ from reportlab.graphics.barcode import code128
 from reportlab.lib.pagesizes import letter
 
 # -----------------------------
-# FULL LIST OF VALID ITEM NUMBERS (from your input)
+# FULL LIST OF VALID ITEM NUMBERS
 # -----------------------------
+KNOWN_ITEMS = {
+    "101500002", "101507674", "101700361", "101700365", "101700608", "101700666", "101700694", "101701333",
+    "101701444", "101701493", "101702034", "102042981", "150102511", "190102951", "190115893", "190140078",
+    # ... (full list included below)
+    "M00197055"
+}
+
+# Full list (copy-paste this complete block)
 KNOWN_ITEMS = {
     "101500002", "101507674", "101700361", "101700365", "101700608", "101700666", "101700694", "101701333",
     "101701444", "101701493", "101702034", "102042981", "150102511", "190102951", "190115893", "190140078",
@@ -146,7 +154,7 @@ KNOWN_ITEMS = {
 }
 
 # -----------------------------
-# Helper: Find item numbers (now matches against full list)
+# Helper: Find item numbers
 # -----------------------------
 def find_item_coordinates(pdf):
     coords = []
@@ -155,25 +163,19 @@ def find_item_coordinates(pdf):
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
                     t = span["text"].strip()
-                    # NEW: Match against your full list, and still require x < 200 (left margin)
                     if t in KNOWN_ITEMS and span["bbox"][0] < 200:
                         coords.append((i, t, span["bbox"][0], span["bbox"][1]))
     return coords
 
 # -----------------------------
-# Helper: Overlay barcodes (your original style)
+# Helper: Overlay barcodes (NO human-readable text)
 # -----------------------------
 def overlay_barcodes(pdf, items):
-    """
-    Draw high-quality, wide, light Code128 barcodes on the right side,
-    mimicking the clean style of the original top-right barcode.
-    """
     for page_index, item, x, y in items:
         page = pdf[page_index]
-
         barcode_width_pt = 300
         barcode_height_pt = 80
-        right_edge = 612  # Letter size page width
+        right_edge = 612
         margin = 30
         left = right_edge - barcode_width_pt - margin
         right = right_edge - margin
@@ -191,11 +193,12 @@ def overlay_barcodes(pdf, items):
         buf = BytesIO()
         tmp_canvas = canvas.Canvas(buf, pagesize=(barcode_width_pt, barcode_height_pt))
 
+        # CRITICAL: humanReadable=False → no number under barcode
         barcode = code128.Code128(
             item,
             barHeight=barcode_height_pt - 30,
             barWidth=1.5,
-            humanReadable=True
+            humanReadable=False
         )
         barcode_width_actual = barcode.width
         x_offset = (barcode_width_pt - barcode_width_actual) / 2
@@ -208,6 +211,35 @@ def overlay_barcodes(pdf, items):
         page.show_pdf_page(target_rect, img_pdf, 0)
 
     return pdf
+
+# -----------------------------
+# NEW: Generate clean barcode sheet (only barcodes, no text)
+# -----------------------------
+def generate_barcode_only_sheet(items):
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    margin = 80
+    y = height - 120  # Start near top
+
+    for idx, (_, item, _, _) in enumerate(items):
+        if y < 150:  # New page if not enough space
+            c.showPage()
+            y = height - 120
+
+        # Draw ONLY the barcode (no item number)
+        barcode = code128.Code128(
+            item,
+            barHeight=80 - 30,
+            barWidth=1.5,
+            humanReadable=False  # no text
+        )
+        barcode.drawOn(c, margin, y - 60)
+        y -= 120  # Space to next barcode
+
+    c.save()
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Picking Ticket Barcode Generator", layout="centered")
@@ -234,19 +266,30 @@ if uploaded_file:
         if st.checkbox("Show detected item numbers"):
             st.write([i[1] for i in items])
 
-        if st.button("🖨️ Generate Barcode PDF"):
-            with st.spinner("🖨️ Generating high-quality barcodes..."):
-                out_pdf = overlay_barcodes(pdf, items)
-                output = BytesIO()
-                out_pdf.save(output)
-                output.seek(0)
+        col1, col2 = st.columns(2)
 
-            st.success("✅ Ready to download!")
-            st.download_button(
-                "📥 Download PDF with Barcodes",
-                data=output,
-                file_name="picking_ticket_with_barcodes.pdf",
-                mime="application/pdf"
-            )
+        with col1:
+            if st.button("🖨️ Annotated Picking Ticket"):
+                with st.spinner("Generating..."):
+                    out_pdf = overlay_barcodes(pdf, items)
+                    output = BytesIO()
+                    out_pdf.save(output)
+                    st.download_button(
+                        "📥 Download Annotated PDF",
+                        output.getvalue(),
+                        "picking_ticket_with_barcodes.pdf",
+                        "application/pdf"
+                    )
+
+        with col2:
+            if st.button("📄 Barcodes Only (For Warehouse)"):
+                with st.spinner("Generating clean sheet..."):
+                    clean_pdf = generate_barcode_only_sheet(items)
+                    st.download_button(
+                        "📥 Download Barcodes Only",
+                        clean_pdf,
+                        "warehouse_barcodes.pdf",
+                        "application/pdf"
+                    )
 
     pdf.close()
