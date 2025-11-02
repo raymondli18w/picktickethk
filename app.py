@@ -11,14 +11,6 @@ from reportlab.lib.pagesizes import letter
 KNOWN_ITEMS = {
     "101500002", "101507674", "101700361", "101700365", "101700608", "101700666", "101700694", "101701333",
     "101701444", "101701493", "101702034", "102042981", "150102511", "190102951", "190115893", "190140078",
-    # ... (full list included below)
-    "M00197055"
-}
-
-# Full list (copy-paste this complete block)
-KNOWN_ITEMS = {
-    "101500002", "101507674", "101700361", "101700365", "101700608", "101700666", "101700694", "101701333",
-    "101701444", "101701493", "101702034", "102042981", "150102511", "190102951", "190115893", "190140078",
     "190144366", "190144369", "190184793", "190202589", "190215954", "190407023", "190501844", "190501845",
     "190501846", "193100135", "193100201", "194200613", "194211042", "194213173", "194213174", "194214230",
     "194218224", "194218963", "194219251", "194220728", "194222476", "194225053", "194227489", "200405060",
@@ -153,9 +145,6 @@ KNOWN_ITEMS = {
     "M00179117", "M00179118", "M00180262", "M00180263", "M00183672", "M00190995", "M00197055"
 }
 
-# -----------------------------
-# Helper: Find item numbers
-# -----------------------------
 def find_item_coordinates(pdf):
     coords = []
     for i, page in enumerate(pdf):
@@ -167,9 +156,6 @@ def find_item_coordinates(pdf):
                         coords.append((i, t, span["bbox"][0], span["bbox"][1]))
     return coords
 
-# -----------------------------
-# Helper: Overlay barcodes (NO human-readable text)
-# -----------------------------
 def overlay_barcodes(pdf, items):
     for page_index, item, x, y in items:
         page = pdf[page_index]
@@ -193,12 +179,12 @@ def overlay_barcodes(pdf, items):
         buf = BytesIO()
         tmp_canvas = canvas.Canvas(buf, pagesize=(barcode_width_pt, barcode_height_pt))
 
-        # CRITICAL: humanReadable=False → no number under barcode
+        # 🔑 CHANGED: humanReadable=False → no number under barcode
         barcode = code128.Code128(
             item,
             barHeight=barcode_height_pt - 30,
             barWidth=1.5,
-            humanReadable=False
+            humanReadable=False  # ← this removes the number
         )
         barcode_width_actual = barcode.width
         x_offset = (barcode_width_pt - barcode_width_actual) / 2
@@ -212,30 +198,28 @@ def overlay_barcodes(pdf, items):
 
     return pdf
 
-# -----------------------------
-# NEW: Generate clean barcode sheet (only barcodes, no text)
-# -----------------------------
+# 🔑 NEW: Generate clean barcode-only sheet
 def generate_barcode_only_sheet(items):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     margin = 80
-    y = height - 120  # Start near top
+    y = height - 120
 
     for idx, (_, item, _, _) in enumerate(items):
-        if y < 150:  # New page if not enough space
+        if y < 150:
             c.showPage()
             y = height - 120
 
-        # Draw ONLY the barcode (no item number)
+        # Only barcode, no text, same style
         barcode = code128.Code128(
             item,
-            barHeight=80 - 30,
+            barHeight=50,
             barWidth=1.5,
-            humanReadable=False  # no text
+            humanReadable=False
         )
         barcode.drawOn(c, margin, y - 60)
-        y -= 120  # Space to next barcode
+        y -= 120  # space between barcodes
 
     c.save()
     buffer.seek(0)
